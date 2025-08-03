@@ -1,11 +1,12 @@
-import React from 'react'
+import React from 'react';
+import CheckInOutWebcam from './CheckInOutWebcam';
 
-const App = () => {
+function App() {
   return (
-    <div>
-      <h1>APP STARTED</h1>
+    <div className="App">
+      <CheckInOutWebcam />
     </div>
-  )
+  );
 }
 
-export default App
+export default App;
