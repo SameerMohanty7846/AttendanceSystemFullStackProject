@@ -8,6 +8,9 @@ const CheckInOutWebcam = () => {
   const [checkOutImage, setCheckOutImage] = useState(null);
   const [checkOutTime, setCheckOutTime] = useState(null);
   const [activeSide, setActiveSide] = useState(null);
+  const [name, setName] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -19,18 +22,24 @@ const CheckInOutWebcam = () => {
 
   // Start camera
   const startCamera = async (side) => {
+    if (!name) {
+      setError('Please enter your name first');
+      return;
+    }
+    
     if ((side === 'in' && checkInImage) || (side === 'out' && checkOutImage)) {
-      alert(`You've already taken the ${side === 'in' ? 'check-in' : 'check-out'} photo!`);
+      setError(`You've already taken the ${side === 'in' ? 'check-in' : 'check-out'} photo!`);
       return;
     }
 
     setActiveSide(side);
+    setError(null);
     
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { 
-          width: { ideal: 1920 },
-          height: { ideal: 1920 },
+          width: { ideal: 1280 }, // Reduced from 1920
+          height: { ideal: 1280 }, // Reduced from 1920
           facingMode: 'user' 
         },
         audio: false,
@@ -41,17 +50,27 @@ const CheckInOutWebcam = () => {
       }
     } catch (err) {
       console.error('Camera error:', err);
-      alert("Camera permission denied or not supported.");
+      setError("Camera permission denied or not supported.");
       setActiveSide(null);
     }
   };
 
+  // Optimize image before sending
+  const optimizeImage = (canvas, quality = 0.7) => {
+    return canvas.toDataURL('image/jpeg', quality);
+  };
+
   // Capture photo
-  const takePicture = () => {
+  const takePicture = async () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
-    if (video && canvas) {
+    if (!video || !canvas) return;
+
+    try {
+      setIsLoading(true);
+      setError(null);
+
       const size = Math.min(video.videoWidth, video.videoHeight);
       canvas.width = size;
       canvas.height = size;
@@ -66,20 +85,65 @@ const CheckInOutWebcam = () => {
       const offsetY = (video.videoHeight - size) / 2;
       context.drawImage(video, -offsetX, -offsetY, video.videoWidth, video.videoHeight);
       
-      const dataURL = canvas.toDataURL('image/png');
+      // Optimize image (reduced quality)
+      const dataURL = optimizeImage(canvas);
       
       if (activeSide === 'in') {
-        setCheckInImage(dataURL);
-        setCheckInTime(new Date());
+        await handleCheckIn(dataURL);
       } else {
-        setCheckOutImage(dataURL);
-        setCheckOutTime(new Date());
+        await handleCheckOut(dataURL);
       }
-      
+    } catch (err) {
+      console.error('Error:', err);
+      setError(err.message || 'Failed to process image');
+    } finally {
       if (videoRef.current?.srcObject) {
         videoRef.current.srcObject.getTracks().forEach(track => track.stop());
       }
+      setIsLoading(false);
       setActiveSide(null);
+    }
+  };
+
+  // Handle check-in API call
+  const handleCheckIn = async (imageData) => {
+    try {
+      const response = await fetch('http://localhost:5000/api/checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, image: imageData }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const result = await response.json();
+      setCheckInImage(imageData);
+      setCheckInTime(new Date());
+    } catch (err) {
+      throw new Error(err.message || 'Check-in failed');
+    }
+  };
+
+  // Handle check-out API call
+  const handleCheckOut = async (imageData) => {
+    try {
+      const response = await fetch('http://localhost:5000/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, image: imageData }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const result = await response.json();
+      setCheckOutImage(imageData);
+      setCheckOutTime(new Date());
+    } catch (err) {
+      throw new Error(err.message || 'Check-out failed');
     }
   };
 
@@ -87,13 +151,24 @@ const CheckInOutWebcam = () => {
     <div className="container-fluid vh-100 d-flex flex-column p-0" style={{ background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)' }}>
       {/* Header */}
       <div className="bg-dark text-white p-3 text-center shadow-sm">
-        <h4 className="mb-0">
-          <i className="bi bi-clock-history me-2"></i>
-          {currentDateTime.toLocaleDateString()} - {currentDateTime.toLocaleTimeString()}
-        </h4>
+        <div className="d-flex justify-content-center align-items-center gap-3">
+          <div>
+            <i className="bi bi-clock-history me-2"></i>
+            {currentDateTime.toLocaleDateString()} - {currentDateTime.toLocaleTimeString()}
+          </div>
+          <input
+            type="text"
+            className="form-control w-auto"
+            placeholder="Enter your name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
+        </div>
+        {error && <div className="text-danger mt-2">{error}</div>}
       </div>
 
-      {/* Large Circular Camera View */}
+      {/* Camera Modal */}
       {activeSide && (
         <div className="position-fixed top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center bg-dark bg-opacity-75 z-3">
           <div className="position-relative" style={{ width: '90vmin', height: '90vmin', maxWidth: '600px', maxHeight: '600px' }}>
@@ -113,8 +188,15 @@ const CheckInOutWebcam = () => {
                   onClick={takePicture} 
                   className="btn btn-success btn-lg rounded-pill px-4 py-2 shadow-sm"
                   style={{ minWidth: '140px' }}
+                  disabled={isLoading}
                 >
-                  <i className="bi bi-camera-fill me-2"></i> Capture
+                  {isLoading ? (
+                    <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                  ) : (
+                    <>
+                      <i className="bi bi-camera-fill me-2"></i> Capture
+                    </>
+                  )}
                 </button>
                 <button 
                   onClick={() => {
@@ -125,6 +207,7 @@ const CheckInOutWebcam = () => {
                   }} 
                   className="btn btn-danger btn-lg rounded-pill px-4 py-2 shadow-sm"
                   style={{ minWidth: '140px' }}
+                  disabled={isLoading}
                 >
                   <i className="bi bi-x-lg me-2"></i> Cancel
                 </button>
@@ -134,6 +217,7 @@ const CheckInOutWebcam = () => {
         </div>
       )}
 
+      {/* Hidden canvas */}
       <canvas ref={canvasRef} style={{ display: 'none' }} />
 
       {/* Two circles section */}
@@ -152,10 +236,10 @@ const CheckInOutWebcam = () => {
               style={{ 
                 width: '350px', 
                 height: '350px',
-                cursor: !checkInImage ? 'pointer' : 'default',
+                cursor: !checkInImage && !isLoading ? 'pointer' : 'default',
                 background: checkInImage ? 'none' : 'rgba(13, 110, 253, 0.1)'
               }}
-              onClick={() => !checkInImage && startCamera('in')}
+              onClick={() => !checkInImage && !isLoading && startCamera('in')}
             >
               {checkInImage ? (
                 <img 
@@ -194,10 +278,10 @@ const CheckInOutWebcam = () => {
               style={{ 
                 width: '350px', 
                 height: '350px',
-                cursor: !checkOutImage ? 'pointer' : 'default',
+                cursor: !checkOutImage && !isLoading ? 'pointer' : 'default',
                 background: checkOutImage ? 'none' : 'rgba(220, 53, 69, 0.1)'
               }}
-              onClick={() => !checkOutImage && startCamera('out')}
+              onClick={() => !checkOutImage && !isLoading && startCamera('out')}
             >
               {checkOutImage ? (
                 <img 

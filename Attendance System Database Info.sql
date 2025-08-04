@@ -1,4 +1,4 @@
--- Run these commands in your MySQL client
+
 CREATE DATABASE attendance_db;
 
 USE attendance_db;
@@ -13,3 +13,5 @@ CREATE TABLE attendance (
   check_in_image_path VARCHAR(255),
   check_out_image_path VARCHAR(255)
 );
+show tables;
+select * from attendance;
